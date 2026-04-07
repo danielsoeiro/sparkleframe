@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Union
 
 import polars as pl
@@ -27,6 +28,31 @@ def col(name: str) -> Column:
             expr = expr.struct.field(seg)
         return Column(expr)  # pass a Polars Expr directly
     return Column(pl.col(name))
+
+
+def expr(sql: str) -> Column:
+    """
+    Mimics pyspark.sql.functions.expr.
+
+    Parses a SQL expression string into a Column. Delegates to Polars
+    :func:`polars.sql_expr` when supported. Spark forms that Polars SQL does not
+    implement (e.g. ``uuid()``) are mapped explicitly.
+
+    Args:
+        sql: A SQL expression, e.g. ``"CAST(x AS DOUBLE)"`` or ``"uuid()"``.
+
+    Returns:
+        Column: The parsed expression.
+    """
+    if not isinstance(sql, str):
+        raise TypeError(f"expr expects a string, got {type(sql).__name__}")
+    raw = sql.strip()
+    key = raw.lower().rstrip(";").strip()
+    if key == "uuid()":
+        return Column(
+            pl.int_range(0, pl.len(), dtype=pl.UInt32).map_elements(lambda _: str(uuid.uuid4()), return_dtype=pl.Utf8)
+        )
+    return Column(pl.sql_expr(raw))
 
 
 def get_json_object(col: Union[str, Column], path: str) -> Column:

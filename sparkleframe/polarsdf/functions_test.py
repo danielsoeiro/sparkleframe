@@ -1,4 +1,5 @@
 import json
+import re
 
 import pandas as pd
 import pandas.testing as pdt
@@ -14,6 +15,7 @@ from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
 from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
+from pyspark.sql.functions import expr as spark_expr
 from pyspark.sql.functions import get_json_object as spark_get_json_object
 from pyspark.sql.functions import length as spark_length
 from pyspark.sql.functions import lit as spark_lit
@@ -41,6 +43,7 @@ from sparkleframe.polarsdf.functions import (
     desc,
     desc_nulls_first,
     desc_nulls_last,
+    expr,
     get_json_object,
     length,
     lit,
@@ -80,6 +83,32 @@ class TestFunctions:
         expected_spark_df = spark_df.withColumn("result", spark_when(spark_col("a") > 2, "yes").otherwise("no"))
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_expr_sql_on_column(self, spark):
+        """sql_expr path: same integral dtype end-to-end (avoid float→long pandas inference)."""
+        data = to_records({"x": [1, 2, 3]})
+        spark_df = spark.createDataFrame(data).withColumn("y", spark_expr("x * 2"))
+        pl_df = DataFrame(pl.DataFrame(data)).withColumn("y", expr("x * 2"))
+        result_spark_df = spark.createDataFrame(pl_df.toPandas())
+        assert_pyspark_df_equal(result_spark_df, spark_df, ignore_nullable=True)
+
+    def test_expr_uuid(self, spark):
+        uuid_pat = re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            re.IGNORECASE,
+        )
+
+        def assert_uuid_strings(sdf, col_name: str) -> None:
+            vals = [row[col_name] for row in sdf.collect()]
+            assert len(vals) == len(set(vals))
+            for v in vals:
+                assert isinstance(v, str) and uuid_pat.match(v), v
+
+        data = to_records({"id": [1, 2, 3, 4, 5]})
+        spark_df = spark.createDataFrame(data).withColumn("nba_action_id", spark_expr("uuid()"))
+        pl_df = DataFrame(pl.DataFrame(data)).withColumn("nba_action_id", expr("uuid()"))
+        assert_uuid_strings(spark_df, "nba_action_id")
+        assert_uuid_strings(spark.createDataFrame(pl_df.toPandas()), "nba_action_id")
 
     def test_chained_when_boolean_output(self, spark):
         # Input data
