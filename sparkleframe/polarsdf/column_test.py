@@ -1,24 +1,24 @@
 from datetime import datetime
 
-import pytest
 import polars as pl
+import pyspark.sql.functions as F
+import pytest
 from polars.polars import InvalidOperationError
 
 from sparkleframe.polarsdf import DataFrame, StringType
 from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import (
+    BinaryType,
+    BooleanType,
+    ByteType,
+    DateType,
+    DoubleType,
+    FloatType,
     IntegerType,
     LongType,
-    FloatType,
-    DoubleType,
-    BooleanType,
-    DateType,
-    TimestampType,
-    ByteType,
     ShortType,
-    BinaryType,
+    TimestampType,
 )
-import pyspark.sql.functions as F
 
 
 @pytest.fixture
@@ -156,6 +156,54 @@ class TestColumn:
 
         # Assert the column's dtype is as expected
         assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    # ---- try_cast tests ----
+
+    @pytest.mark.parametrize(
+        "data_type_class, expected_polars_dtype",
+        [
+            (StringType, pl.Utf8),
+            (IntegerType, pl.Int32),
+            (LongType, pl.Int64),
+            (FloatType, pl.Float32),
+            (DoubleType, pl.Float64),
+            (BooleanType, pl.Boolean),
+        ],
+    )
+    def test_try_cast_datatype_valid(self, sample_df, data_type_class, expected_polars_dtype):
+        expr = col("a").try_cast(data_type_class())
+        result_df = DataFrame(sample_df).select(expr.alias("casted"))
+        assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    @pytest.mark.parametrize(
+        "type_name, expected_polars_dtype",
+        [
+            ("string", pl.Utf8),
+            ("int", pl.Int32),
+            ("integer", pl.Int32),
+            ("bigint", pl.Int64),
+            ("long", pl.Int64),
+            ("double", pl.Float64),
+            ("float", pl.Float32),
+            ("boolean", pl.Boolean),
+            ("date", pl.Date),
+            ("timestamp", pl.Datetime),
+        ],
+    )
+    def test_try_cast_string_type_name(self, sample_df, type_name, expected_polars_dtype):
+        expr = col("a").try_cast(type_name)
+        result_df = DataFrame(sample_df).select(expr.alias("casted"))
+        assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    def test_try_cast_invalid_returns_null(self):
+        df = pl.DataFrame({"name": ["123", "Bob", None]})
+        result = DataFrame(df).select(col("name").try_cast(LongType()).alias("v")).to_native_df()
+        assert result["v"].to_list() == [123, None, None]
+
+    def test_try_cast_string_invalid_returns_null(self):
+        df = pl.DataFrame({"name": ["123", "Bob", None]})
+        result = DataFrame(df).select(col("name").try_cast("double").alias("v")).to_native_df()
+        assert result["v"].to_list() == [123.0, None, None]
 
     def test_is_not_null(self):
         df = pl.DataFrame({"x": [1, None, 3, None, 5]})

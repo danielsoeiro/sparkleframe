@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import date
 
 import pandas as pd
 import pandas.testing as pdt
@@ -54,6 +55,9 @@ from sparkleframe.polarsdf.functions import (
     row_number,
     struct,
     to_timestamp,
+    try_element_at,
+    try_to_date,
+    try_to_timestamp,
     when,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
@@ -579,3 +583,120 @@ class TestFunctions:
     def test_struct_requires_at_least_one_column(self):
         with pytest.raises(ValueError, match="struct requires at least one column"):
             struct()
+
+
+class TestTryToTimestamp:
+    """Tests for try_to_timestamp — verifies null-safe parsing behaviour."""
+
+    @pytest.mark.parametrize(
+        "datetime_strs, fmt",
+        [
+            (["2023-01-01 12:34:56", "2024-02-02 23:45:01"], "yyyy-MM-dd HH:mm:ss"),
+            (["01-03-2023 09:15:00", "31-12-2022 23:59:59"], "dd-MM-yyyy HH:mm:ss"),
+            (["2024-05-31 20:14:19.993", "2023-12-12 11:11:11.123"], "yyyy-MM-dd HH:mm:ss.SSS"),
+        ],
+    )
+    def test_try_to_timestamp_valid_matches_to_timestamp(self, spark, datetime_strs, fmt):
+        df = pd.DataFrame({"ts": datetime_strs})
+        polars_df = DataFrame(pl.DataFrame(df))
+
+        result_strict = polars_df.select(to_timestamp("ts", fmt).alias("result")).to_native_df()
+        result_try = polars_df.select(try_to_timestamp("ts", fmt).alias("result")).to_native_df()
+
+        assert result_strict["result"].to_list() == result_try["result"].to_list()
+
+    def test_try_to_timestamp_malformed_returns_null(self):
+        df = pl.DataFrame({"ts": ["2023-01-01 12:34:56", "not-a-date", None]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_to_timestamp("ts").alias("result")).to_native_df()
+
+        assert result["result"][0] is not None
+        assert result["result"][1] is None
+        assert result["result"][2] is None
+
+    def test_try_to_timestamp_accepts_column_input(self):
+        df = pl.DataFrame({"ts": ["2023-01-01 12:34:56"]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_to_timestamp(col("ts")).alias("result")).to_native_df()
+
+        assert result["result"][0] is not None
+
+
+class TestTryToDate:
+    """Tests for try_to_date — verifies null-safe date parsing."""
+
+    def test_try_to_date_default_format(self):
+        df = pl.DataFrame({"d": ["1997-02-28", "2024-12-31", "bad", None]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_to_date("d").alias("result")).to_native_df()
+
+        assert result["result"][0] == date(1997, 2, 28)
+        assert result["result"][1] == date(2024, 12, 31)
+        assert result["result"][2] is None
+        assert result["result"][3] is None
+
+    def test_try_to_date_custom_format(self):
+        df = pl.DataFrame({"d": ["28-02-1997", "31-12-2024"]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result")).to_native_df()
+
+        assert result["result"][0] == date(1997, 2, 28)
+        assert result["result"][1] == date(2024, 12, 31)
+
+    def test_try_to_date_accepts_column_input(self):
+        df = pl.DataFrame({"d": ["2024-01-01"]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_to_date(col("d")).alias("result")).to_native_df()
+        assert result["result"][0] is not None
+
+
+class TestTryElementAt:
+    """Tests for try_element_at — arrays (1-based) and maps."""
+
+    def test_array_positive_index(self):
+        df = pl.DataFrame({"arr": [["a", "b", "c"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("arr", 1).alias("v")).to_native_df()
+        assert result["v"][0] == "a"
+
+    def test_array_last_element(self):
+        df = pl.DataFrame({"arr": [["a", "b", "c"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("arr", 3).alias("v")).to_native_df()
+        assert result["v"][0] == "c"
+
+    def test_array_negative_index(self):
+        df = pl.DataFrame({"arr": [["a", "b", "c"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("arr", -1).alias("v")).to_native_df()
+        assert result["v"][0] == "c"
+
+    def test_array_oob_returns_null(self):
+        df = pl.DataFrame({"arr": [["a", "b", "c"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("arr", 4).alias("v")).to_native_df()
+        assert result["v"][0] is None
+
+    def test_array_zero_index_returns_null(self):
+        df = pl.DataFrame({"arr": [["a", "b", "c"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("arr", 0).alias("v")).to_native_df()
+        assert result["v"][0] is None
+
+    def test_map_key_present(self):
+        df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("m", "a").alias("v")).to_native_df()
+        assert result["v"][0] == 1.0
+
+    def test_map_key_absent_returns_null(self):
+        df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at("m", "c").alias("v")).to_native_df()
+        assert result["v"][0] is None
+
+    def test_accepts_column_input(self):
+        df = pl.DataFrame({"arr": [["x", "y"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at(col("arr"), 1).alias("v")).to_native_df()
+        assert result["v"][0] == "x"

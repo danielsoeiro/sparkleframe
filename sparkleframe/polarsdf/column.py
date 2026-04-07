@@ -7,6 +7,32 @@ import polars as pl
 
 from sparkleframe.polarsdf.types import DataType
 
+_SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
+    "string": pl.Utf8,
+    "int": pl.Int32,
+    "integer": pl.Int32,
+    "bigint": pl.Int64,
+    "long": pl.Int64,
+    "short": pl.Int16,
+    "smallint": pl.Int16,
+    "tinyint": pl.Int8,
+    "byte": pl.Int8,
+    "float": pl.Float32,
+    "double": pl.Float64,
+    "boolean": pl.Boolean,
+    "date": pl.Date,
+    "timestamp": pl.Datetime,
+    "binary": pl.Binary,
+}
+
+
+def _spark_type_name_to_polars(name: str) -> pl.DataType:
+    key = name.strip().lower()
+    try:
+        return _SPARK_TYPE_NAME_MAP[key]
+    except KeyError:
+        raise ValueError(f"Unsupported Spark type name for try_cast: '{name}'") from None
+
 
 class Column:
     def __init__(self, expr_or_name):
@@ -97,6 +123,28 @@ class Column:
         if not isinstance(data_type, DataType):
             raise TypeError(f"cast() expects a DataType, got {type(data_type)}")
         return Column(self.expr.cast(data_type.to_native()))
+
+    def try_cast(self, data_type: Union[DataType, str]) -> "Column":
+        """
+        Mimics pyspark.sql.Column.try_cast (Spark 4+).
+
+        Attempts to cast the column to the target type; returns null instead
+        of raising an error when the value cannot be converted.
+
+        Args:
+            data_type (DataType or str): Target type as a sparkleframe DataType
+                or a Spark type-name string (e.g. "int", "double", "string").
+
+        Returns:
+            Column: A new Column with the non-strict cast applied.
+        """
+        if isinstance(data_type, DataType):
+            native = data_type.to_native()
+        elif isinstance(data_type, str):
+            native = _spark_type_name_to_polars(data_type)
+        else:
+            raise TypeError(f"try_cast() expects a DataType or str, got {type(data_type)}")
+        return Column(self.expr.cast(native, strict=False))
 
     def isin(self, *values) -> Column:
         """
