@@ -1,58 +1,60 @@
+import json
+
 import pandas as pd
 import pandas.testing as pdt
 import polars as pl
 import pytest
-from pyspark.sql.functions import (
-    col as spark_col,
-    round as spark_round,
-    when as spark_when,
-    get_json_object as spark_get_json_object,
-    lit as spark_lit,
-    coalesce as spark_coalesce,
-    to_timestamp as spark_to_timestamp,
-    regexp_replace as spark_regexp_replace,
-    length as spark_length,
-    asc as spark_asc,
-    asc_nulls_first as spark_asc_nulls_first,
-    asc_nulls_last as spark_asc_nulls_last,
-    desc as spark_desc,
-    desc_nulls_first as spark_desc_nulls_first,
-    desc_nulls_last as spark_desc_nulls_last,
-    rank as spark_rank,
-    dense_rank as spark_dense_rank,
-    row_number as spark_row_number,
-    abs as spark_abs,
-    lower as spark_lower,
-)
+from pyspark.sql.functions import abs as spark_abs
+from pyspark.sql.functions import asc as spark_asc
+from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
+from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
+from pyspark.sql.functions import coalesce as spark_coalesce
+from pyspark.sql.functions import col as spark_col
+from pyspark.sql.functions import dense_rank as spark_dense_rank
+from pyspark.sql.functions import desc as spark_desc
+from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
+from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
+from pyspark.sql.functions import get_json_object as spark_get_json_object
+from pyspark.sql.functions import length as spark_length
+from pyspark.sql.functions import lit as spark_lit
+from pyspark.sql.functions import lower as spark_lower
+from pyspark.sql.functions import rank as spark_rank
+from pyspark.sql.functions import regexp_replace as spark_regexp_replace
+from pyspark.sql.functions import round as spark_round
+from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import struct as spark_struct
+from pyspark.sql.functions import to_timestamp as spark_to_timestamp
+from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.window import Window as SparkWindow
+
 from sparkleframe.polarsdf import Window
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import (
-    col,
-    round,
-    when,
-    get_json_object,
-    lit,
-    coalesce,
-    regexp_replace,
-    to_timestamp,
-    length,
+    abs,
     asc,
     asc_nulls_first,
     asc_nulls_last,
+    coalesce,
+    col,
+    dense_rank,
     desc,
     desc_nulls_first,
     desc_nulls_last,
-    rank,
-    dense_rank,
-    row_number,
-    abs,
+    get_json_object,
+    length,
+    lit,
     lower,
+    rank,
+    regexp_replace,
+    round,
+    row_number,
+    struct,
+    to_timestamp,
+    when,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records, create_spark_df
-import json
+from sparkleframe.tests.utils import create_spark_df, to_records
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
 
@@ -518,3 +520,33 @@ class TestFunctions:
 
         # Compare
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_struct_oracle(self, spark, sparkle_df, spark_df):
+        """PySpark parity: field names follow CreateStruct (plain cols vs colN for lit / expr)."""
+        exprs = [
+            struct("a", "b").alias("s1"),
+            struct(col("a"), col("b")).alias("s2"),
+            struct([col("a"), col("b")]).alias("s3"),
+            struct(col("a"), lit(1)).alias("s4"),
+            struct(lit(1), lit(2)).alias("s5"),
+            struct(col("a") + 1, col("b")).alias("s6"),
+            struct(col("a"), struct(col("b"), lit(3))).alias("s7"),
+            struct(col("a").alias("z")).alias("s8"),
+        ]
+        expected_spark_df = spark_df.select(
+            spark_struct("a", "b").alias("s1"),
+            spark_struct(spark_col("a"), spark_col("b")).alias("s2"),
+            spark_struct([spark_col("a"), spark_col("b")]).alias("s3"),
+            spark_struct(spark_col("a"), spark_lit(1)).alias("s4"),
+            spark_struct(spark_lit(1), spark_lit(2)).alias("s5"),
+            spark_struct(spark_col("a") + 1, spark_col("b")).alias("s6"),
+            spark_struct(spark_col("a"), spark_struct(spark_col("b"), spark_lit(3))).alias("s7"),
+            spark_struct(spark_col("a").alias("z")).alias("s8"),
+        )
+        pdf = sparkle_df.select(*exprs).toPandas()
+        result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_struct_requires_at_least_one_column(self):
+        with pytest.raises(ValueError, match="struct requires at least one column"):
+            struct()
