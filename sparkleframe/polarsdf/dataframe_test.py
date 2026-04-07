@@ -6,46 +6,34 @@ import pyarrow as pa
 import pytest
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col as spark_col
-from pyspark.sql.types import (
-    StringType as SparkStringType,
-    IntegerType as SparkIntegerType,
-    LongType as SparkLongType,
-    FloatType as SparkFloatType,
-    DoubleType as SparkDoubleType,
-    BooleanType as SparkBooleanType,
-    DateType as SparkDateType,
-    TimestampType as SparkTimestampType,
-    DecimalType as SparkDecimalType,
-    ByteType as SparkByteType,
-    ShortType as SparkShortType,
-    BinaryType as SparkBinaryType,
-    StructType as SparkStructType,
-    StructField as SparkStructField,
-)
+from pyspark.sql.types import BinaryType as SparkBinaryType
+from pyspark.sql.types import BooleanType as SparkBooleanType
+from pyspark.sql.types import ByteType as SparkByteType
+from pyspark.sql.types import DateType as SparkDateType
+from pyspark.sql.types import DecimalType as SparkDecimalType
+from pyspark.sql.types import DoubleType as SparkDoubleType
+from pyspark.sql.types import FloatType as SparkFloatType
+from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import LongType as SparkLongType
+from pyspark.sql.types import ShortType as SparkShortType
+from pyspark.sql.types import StringType as SparkStringType
+from pyspark.sql.types import StructField as SparkStructField
+from pyspark.sql.types import StructType as SparkStructType
+from pyspark.sql.types import TimestampType as SparkTimestampType
 
 import sparkleframe.polarsdf.functions as PF
 from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.types import (
-    StringType,
-    IntegerType,
-    LongType,
-    FloatType,
-    DoubleType,
-    BooleanType,
-    DateType,
-    TimestampType,
-    DecimalType,
-    ByteType,
-    ShortType,
-    BinaryType,
-    StructType,
-    StructField,
-    MapType,
-)
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records, create_spark_df, assert_sparkle_spark_frame_are_equal
+from sparkleframe.polarsdf.types import (BinaryType, BooleanType, ByteType,
+                                         DateType, DecimalType, DoubleType,
+                                         FloatType, IntegerType, LongType,
+                                         MapType, ShortType, StringType,
+                                         StructField, StructType,
+                                         TimestampType)
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
+from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.tests.utils import (assert_sparkle_spark_frame_are_equal,
+                                      create_spark_df, to_records)
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -540,6 +528,31 @@ class TestDataFrame:
         # Assert equivalence
         result_spark_df = result_spark_df.withColumn("agg_result", F.col("agg_result").cast("float"))
         expected_df = expected_df.withColumn("agg_result", F.col("agg_result").cast("float"))
+        assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
+
+    @pytest.mark.parametrize("use_alias", [False, True])
+    def test_groupby_collect_list(self, spark, use_alias):
+        """collect_list matches Spark; rows are ordered so list order is deterministic."""
+        data = to_records(
+            {
+                "group": ["A", "A", "A", "B", "B"],
+                "value": [3, None, 1, 2, None],
+            }
+        )
+        spark_df = spark.createDataFrame(data).orderBy("group", F.asc_nulls_last("value"))
+        pl_df = DataFrame(pl.DataFrame(data)).sort("group", PF.asc_nulls_last("value"))
+
+        if not use_alias:
+            expected_df = spark_df.groupBy("group")
+            result_df = pl_df.groupBy("group")
+        else:
+            expected_df = spark_df.groupby("group")
+            result_df = pl_df.groupby("group")
+
+        expected_df = expected_df.agg(F.collect_list("value").alias("agg_result"))
+        result_df = result_df.agg(PF.collect_list("value").alias("agg_result"))
+
+        result_spark_df = spark.createDataFrame(result_df.toPandas())
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
     @pytest.mark.parametrize(
