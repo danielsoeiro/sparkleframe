@@ -1,36 +1,33 @@
 from __future__ import annotations
 
-from typing import Union, Any, Iterable, Tuple
+from typing import Any, Iterable, List, Optional, Tuple, Union
 from uuid import uuid4
-from sparkleframe.polarsdf import types as sft
+
 import pandas as pd
 import polars as pl
 import pyarrow as pa
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
+from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
-
 from sparkleframe.polarsdf.types import (
+    BinaryType,
+    BooleanType,
+    ByteType,
     DataType,
-    StringType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
     IntegerType,
     LongType,
-    FloatType,
-    DoubleType,
-    BooleanType,
-    DateType,
-    TimestampType,
-    ByteType,
     ShortType,
-    DecimalType,
-    BinaryType,
-    StructType,
+    StringType,
     StructField,
+    StructType,
+    TimestampType,
 )
-
-from typing import List, Optional
-
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 
 
@@ -261,6 +258,40 @@ class DataFrame(BaseDataFrame):
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
 
+    def drop(self, *cols: Union[str, Column]) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.drop.
+
+        Removes the given columns. Columns that are not in the schema are ignored
+        (same as PySpark). With no arguments, returns a copy of the DataFrame.
+
+        Args:
+            *cols: Column names as strings or Column references (e.g. ``col("x")``).
+                Use ``df.drop(*["a", "b"])`` to drop from a list (same as PySpark).
+
+        Returns:
+            DataFrame: A new DataFrame without the dropped columns.
+        """
+        if not cols:
+            return DataFrame(self.df.clone())
+
+        to_drop: List[str] = []
+        for c in cols:
+            if isinstance(c, str):
+                to_drop.append(c)
+            elif isinstance(c, Column):
+                roots = c.to_native().meta.root_names()
+                if not roots:
+                    raise TypeError("drop() Column expression must reference a named column")
+                to_drop.append(roots[0])
+            else:
+                raise TypeError(f"drop() expected str or Column, got {type(c).__name__}")
+
+        existing = [name for name in to_drop if name in self.df.columns]
+        if not existing:
+            return DataFrame(self.df.clone())
+        return DataFrame(self.df.drop(*existing))
+
     def toPandas(self) -> pd.DataFrame:
         """
         Convert the underlying Polars DataFrame to a Pandas DataFrame,
@@ -269,6 +300,7 @@ class DataFrame(BaseDataFrame):
         but keeps the column and row structure intact.
         """
         import math
+
         import numpy as np
         import pandas as pd
 
