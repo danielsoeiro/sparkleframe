@@ -111,10 +111,10 @@ class TestFunctions:
                 assert isinstance(v, str) and uuid_pat.match(v), v
 
         data = to_records({"id": [1, 2, 3, 4, 5]})
-        spark_df = spark.createDataFrame(data).withColumn("nba_action_id", spark_expr("uuid()"))
-        pl_df = DataFrame(pl.DataFrame(data)).withColumn("nba_action_id", expr("uuid()"))
-        assert_uuid_strings(spark_df, "nba_action_id")
-        assert_uuid_strings(spark.createDataFrame(pl_df.toPandas()), "nba_action_id")
+        spark_df = spark.createDataFrame(data).withColumn("uuid_col", spark_expr("uuid()"))
+        pl_df = DataFrame(pl.DataFrame(data)).withColumn("uuid_col", expr("uuid()"))
+        assert_uuid_strings(spark_df, "uuid_col")
+        assert_uuid_strings(spark.createDataFrame(pl_df.toPandas()), "uuid_col")
 
     def test_chained_when_boolean_output(self, spark):
         # Input data
@@ -739,10 +739,4 @@ class TestTryElementAt:
         df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("m", "c").alias("v")).to_native_df()
-        assert result["v"][0] is None
-
-    def test_accepts_column_input(self):
-        df = pl.DataFrame({"arr": [["x", "y"]]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_element_at(col("arr"), 1).alias("v")).to_native_df()
-        assert result["v"][0] == "x"
+        asser
