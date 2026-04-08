@@ -232,10 +232,12 @@ class TestDataFrame:
         expected_spark_df = spark_df.drop("not_there", "age")
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
 
-    def test_drop_no_args_returns_copy(self, sparkle_df):
+    def test_drop_no_args_returns_new_wrapper_same_polars_df(self, sparkle_df):
         out = sparkle_df.drop()
+        assert out is not sparkle_df
         assert out.columns == sparkle_df.columns
-        assert out.df is not sparkle_df.df
+        assert out.df is sparkle_df.df
+        assert out.to_native_df().equals(sparkle_df.to_native_df())
 
     def test_to_native_df(self, sparkle_df):
         native_df = sparkle_df.to_native_df()

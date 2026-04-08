@@ -263,7 +263,8 @@ class DataFrame(BaseDataFrame):
         Mimics PySpark's DataFrame.drop.
 
         Removes the given columns. Columns that are not in the schema are ignored
-        (same as PySpark). With no arguments, returns a copy of the DataFrame.
+        (same as PySpark). With no arguments, returns a new DataFrame wrapper over
+        the same underlying Polars frame (same pattern as ``select`` / ``sort``).
 
         Args:
             *cols: Column names as strings or Column references (e.g. ``col("x")``).
@@ -273,7 +274,7 @@ class DataFrame(BaseDataFrame):
             DataFrame: A new DataFrame without the dropped columns.
         """
         if not cols:
-            return DataFrame(self.df.clone())
+            return DataFrame(self.df)
 
         to_drop: List[str] = []
         for c in cols:
@@ -289,7 +290,7 @@ class DataFrame(BaseDataFrame):
 
         existing = [name for name in to_drop if name in self.df.columns]
         if not existing:
-            return DataFrame(self.df.clone())
+            return DataFrame(self.df)
         return DataFrame(self.df.drop(*existing))
 
     def toPandas(self) -> pd.DataFrame:
