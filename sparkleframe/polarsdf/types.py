@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import polars as pl
 
-_SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
+SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
     "string": pl.Utf8,
     "int": pl.Int32,
     "integer": pl.Int32,
@@ -22,10 +22,10 @@ _SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
 }
 
 
-def _spark_type_name_to_polars(name: str) -> pl.DataType:
+def spark_type_name_to_polars(name: str) -> pl.DataType:
     key = name.strip().lower()
     try:
-        return _SPARK_TYPE_NAME_MAP[key]
+        return SPARK_TYPE_NAME_MAP[key]
     except KeyError:
         raise ValueError(f"Unsupported Spark type name for try_cast: '{name}'") from None
 

@@ -8,6 +8,7 @@ from polars.polars import InvalidOperationError
 from sparkleframe.polarsdf import DataFrame, StringType
 from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import (
+    SPARK_TYPE_NAME_MAP,
     BinaryType,
     BooleanType,
     ByteType,
@@ -177,21 +178,22 @@ class TestColumn:
         assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
 
     @pytest.mark.parametrize(
-        "type_name, expected_polars_dtype",
+        "type_name",
         [
-            ("string", pl.Utf8),
-            ("int", pl.Int32),
-            ("integer", pl.Int32),
-            ("bigint", pl.Int64),
-            ("long", pl.Int64),
-            ("double", pl.Float64),
-            ("float", pl.Float32),
-            ("boolean", pl.Boolean),
-            ("date", pl.Date),
-            ("timestamp", pl.Datetime),
+            "string",
+            "int",
+            "integer",
+            "bigint",
+            "long",
+            "double",
+            "float",
+            "boolean",
+            "date",
+            "timestamp",
         ],
     )
-    def test_try_cast_string_type_name(self, sample_df, type_name, expected_polars_dtype):
+    def test_try_cast_string_type_name(self, sample_df, type_name: str):
+        expected_polars_dtype = SPARK_TYPE_NAME_MAP[type_name]
         expr = col("a").try_cast(type_name)
         result_df = DataFrame(sample_df).select(expr.alias("casted"))
         assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
@@ -309,4 +311,4 @@ class TestColumn:
         actual_rows = spark_from_polars.orderBy("idx").collect()
         expected_rows = expected.orderBy("idx").collect()
 
-        assert actual_row
+        assert actual_rows == expected_rows

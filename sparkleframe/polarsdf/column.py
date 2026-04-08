@@ -5,7 +5,7 @@ from typing import Union
 
 import polars as pl
 
-from sparkleframe.polarsdf.types import DataType, _spark_type_name_to_polars
+from sparkleframe.polarsdf.types import DataType, spark_type_name_to_polars
 
 
 class Column:
@@ -115,7 +115,7 @@ class Column:
         if isinstance(data_type, DataType):
             native = data_type.to_native()
         elif isinstance(data_type, str):
-            native = _spark_type_name_to_polars(data_type)
+            native = spark_type_name_to_polars(data_type)
         else:
             raise TypeError(f"try_cast() expects a DataType or str, got {type(data_type)}")
         return Column(self.expr.cast(native, strict=False))
