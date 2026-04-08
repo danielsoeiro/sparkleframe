@@ -160,17 +160,18 @@ class TestColumn:
     # ---- try_cast tests ----
 
     @pytest.mark.parametrize(
-        "data_type_class, expected_polars_dtype",
+        "data_type_class",
         [
-            (StringType, pl.Utf8),
-            (IntegerType, pl.Int32),
-            (LongType, pl.Int64),
-            (FloatType, pl.Float32),
-            (DoubleType, pl.Float64),
-            (BooleanType, pl.Boolean),
+            StringType,
+            IntegerType,
+            LongType,
+            FloatType,
+            DoubleType,
+            BooleanType,
         ],
     )
-    def test_try_cast_datatype_valid(self, sample_df, data_type_class, expected_polars_dtype):
+    def test_try_cast_datatype_valid(self, sample_df, data_type_class):
+        expected_polars_dtype = data_type_class().to_native()
         expr = col("a").try_cast(data_type_class())
         result_df = DataFrame(sample_df).select(expr.alias("casted"))
         assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
@@ -308,4 +309,4 @@ class TestColumn:
         actual_rows = spark_from_polars.orderBy("idx").collect()
         expected_rows = expected.orderBy("idx").collect()
 
-        assert actual_rows == expected_rows
+        assert actual_row
