@@ -35,8 +35,14 @@ def expr(sql: str) -> Column:
     Mimics pyspark.sql.functions.expr.
 
     Parses a SQL expression string into a Column. Delegates to Polars
-    :func:`polars.sql_expr` when supported. Spark forms that Polars SQL does not
-    implement (e.g. ``uuid()``) are mapped explicitly.
+    :func:`polars.sql_expr` when supported. Spark-specific forms that Polars SQL
+    does not implement (e.g. ``uuid()``) are mapped explicitly.
+
+    Note:
+        Polars SQL is **not** the same dialect as Spark SQL: syntax, functions,
+        and semantics can differ. Some strings valid in Spark may fail or behave
+        differently here; this wrapper provides best-effort PySpark compatibility
+        rather than identical parsing.
 
     Args:
         sql: A SQL expression, e.g. ``"CAST(x AS DOUBLE)"`` or ``"uuid()"``.
