@@ -29,7 +29,9 @@ from pyspark.sql.functions import row_number as spark_row_number
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
 from pyspark.sql.functions import when as spark_when
+from pyspark.sql.types import ArrayType, DoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import MapType, StringType, StructField, StructType
 from pyspark.sql.window import Window as SparkWindow
 
 from sparkleframe.polarsdf import Window
@@ -66,6 +68,21 @@ from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import create_spark_df, to_records
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+
+
+def _polars_map_entries_to_spark_dict(obj: object) -> object:
+    """Normalize Polars map-as-list-of-{key,value} to dicts for Spark createDataFrame(pdf, schema)."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if isinstance(v, list) and v and isinstance(v[0], dict) and "key" in v[0] and "value" in v[0]:
+                out[k] = {e["key"]: float(e["value"]) for e in v}
+            else:
+                out[k] = _polars_map_entries_to_spark_dict(v)
+        return out
+    return obj
 
 
 @pytest.fixture
@@ -582,6 +599,39 @@ class TestFunctions:
         result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
 
+    def test_struct_nested_with_array_and_map(self, spark):
+        """PySpark parity: struct with array and map fields, plus nested struct."""
+        schema = StructType(
+            [
+                StructField("id", SparkIntegerType(), True),
+                StructField("nums", ArrayType(SparkIntegerType()), True),
+                StructField("kv", MapType(StringType(), DoubleType()), True),
+            ]
+        )
+        spark_row = (1, [10, 20, 30], {"x": 1.0, "y": 2.0})
+        spark_input = spark.createDataFrame([spark_row], schema)
+        pl_df = pl.DataFrame(
+            {
+                "id": [1],
+                "nums": [[10, 20, 30]],
+                "kv": [[{"key": "x", "value": 1.0}, {"key": "y", "value": 2.0}]],
+            }
+        )
+        sparkle_df = DataFrame(pl_df)
+        exprs = [
+            struct(col("id"), col("nums"), col("kv")).alias("s1"),
+            struct(col("id"), struct(col("nums"), col("kv"))).alias("s2"),
+        ]
+        expected_spark_df = spark_input.select(
+            spark_struct(spark_col("id"), spark_col("nums"), spark_col("kv")).alias("s1"),
+            spark_struct(spark_col("id"), spark_struct(spark_col("nums"), spark_col("kv"))).alias("s2"),
+        )
+        pdf = sparkle_df.select(*exprs).toPandas()
+        for col_name in ("s1", "s2"):
+            pdf[col_name] = pdf[col_name].apply(_polars_map_entries_to_spark_dict)
+        result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
     def test_struct_requires_at_least_one_column(self):
         with pytest.raises(ValueError, match="struct requires at least one column"):
             struct()
@@ -738,5 +788,4 @@ class TestTryElementAt:
     def test_map_key_absent_returns_null(self):
         df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
         polars_df = DataFrame(df)
-        result = polars_df.select(try_element_at("m", "c").alias("v")).to_native_df()
-        asser
+        result = polars_df.select(try_element_at("m", "c").alias("v")).to_nativ
