@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from datetime import date
 
@@ -28,6 +29,8 @@ from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
+from pyspark.sql.functions import try_element_at as spark_try_element_at
+from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
 from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import ArrayType, DoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
@@ -68,6 +71,17 @@ from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import create_spark_df, to_records
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+
+
+def _assert_spark_columns_both_nullish(df1, df2, col: str = "v") -> None:
+    """Spark round-trip may use NaN where native Spark SQL uses null for missing doubles."""
+
+    def _is_nullish(x: object) -> bool:
+        return x is None or (isinstance(x, float) and math.isnan(x))
+
+    v1 = df1.collect()[0][col]
+    v2 = df2.collect()[0][col]
+    assert _is_nullish(v1) and _is_nullish(v2)
 
 
 def _polars_map_entries_to_spark_dict(obj: object) -> object:
@@ -644,28 +658,42 @@ class TestConcat:
         with pytest.raises(ValueError, match="concat requires at least one column"):
             concat()
 
-    def test_concat_single_column_is_identity_on_strings(self) -> None:
+    def test_concat_single_column_is_identity_on_strings(self, spark) -> None:
         pl_df = pl.DataFrame({"token": ["zig", None, ""]})
-        got = DataFrame(pl_df).select(concat("token").alias("out")).to_native_df()
-        assert got["out"].to_list() == ["zig", None, ""]
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        result_spark_df = create_spark_df(spark, polars_df.select(concat("token").alias("out")))
+        expected_df = spark_df.select(spark_concat(spark_col("token")).alias("out"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
-    def test_concat_two_parts_any_null_yields_null(self) -> None:
+    def test_concat_two_parts_any_null_yields_null(self, spark) -> None:
         pl_df = pl.DataFrame(
             {
                 "prefix": ["aa", None, "cc"],
                 "suffix": ["bb", "bb", None],
             }
         )
-        got = DataFrame(pl_df).select(concat(col("prefix"), col("suffix")).alias("out")).to_native_df()
-        assert got["out"].to_list() == ["aabb", None, None]
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        result_spark_df = create_spark_df(spark, polars_df.select(concat(col("prefix"), col("suffix")).alias("out")))
+        expected_df = spark_df.select(spark_concat(spark_col("prefix"), spark_col("suffix")).alias("out"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
-    def test_concat_accepts_string_name_or_column_object(self) -> None:
+    def test_concat_accepts_string_name_or_column_object(self, spark) -> None:
         pl_df = pl.DataFrame({"segment": ["north", "south"]})
-        sf = DataFrame(pl_df)
-        by_name = sf.select(concat("segment", lit(":"), col("segment")).alias("out")).to_native_df()
-        by_col = sf.select(concat(col("segment"), lit(":"), "segment").alias("out")).to_native_df()
-        assert by_name["out"].to_list() == ["north:north", "south:south"]
-        assert by_col["out"].to_list() == by_name["out"].to_list()
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        by_name_spark = create_spark_df(
+            spark, polars_df.select(concat("segment", lit(":"), col("segment")).alias("out"))
+        )
+        by_col_spark = create_spark_df(
+            spark, polars_df.select(concat(col("segment"), lit(":"), "segment").alias("out"))
+        )
+        expected_df = spark_df.select(
+            spark_concat(spark_col("segment"), spark_lit(":"), spark_col("segment")).alias("out")
+        )
+        assert_pyspark_df_equal(by_name_spark, expected_df, ignore_nullable=True)
+        assert_pyspark_df_equal(by_col_spark, expected_df, ignore_nullable=True)
 
     def test_concat_coerces_integer_columns_like_strings(self, spark) -> None:
         pl_df = pl.DataFrame({"lane": [7, 0], "slot": [13, 42]})
@@ -701,7 +729,12 @@ class TestTryToTimestamp:
 
         assert result_strict["result"].to_list() == result_try["result"].to_list()
 
-    def test_try_to_timestamp_malformed_returns_null(self):
+        spark_df = spark.createDataFrame(df)
+        expected_df = spark_df.select(spark_try_to_timestamp(spark_col("ts"), spark_lit(fmt)).alias("result"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp("ts", fmt).alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_try_to_timestamp_malformed_returns_null(self, spark):
         df = pl.DataFrame({"ts": ["2023-01-01 12:34:56", "not-a-date", None]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_to_timestamp("ts").alias("result")).to_native_df()
@@ -710,18 +743,32 @@ class TestTryToTimestamp:
         assert result["result"][1] is None
         assert result["result"][2] is None
 
-    def test_try_to_timestamp_accepts_column_input(self):
+        spark_df = spark.createDataFrame(df.to_pandas())
+        expected_df = spark_df.select(
+            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
+        )
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp("ts").alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_try_to_timestamp_accepts_column_input(self, spark):
         df = pl.DataFrame({"ts": ["2023-01-01 12:34:56"]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_to_timestamp(col("ts")).alias("result")).to_native_df()
 
         assert result["result"][0] is not None
 
+        spark_df = spark.createDataFrame(df.to_pandas())
+        expected_df = spark_df.select(
+            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
+        )
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp(col("ts")).alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
 
 class TestTryToDate:
     """Tests for try_to_date — verifies null-safe date parsing."""
 
-    def test_try_to_date_default_format(self):
+    def test_try_to_date_default_format(self, spark):
         df = pl.DataFrame({"d": ["1997-02-28", "2024-12-31", "bad", None]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_to_date("d").alias("result")).to_native_df()
@@ -731,7 +778,14 @@ class TestTryToDate:
         assert result["result"][2] is None
         assert result["result"][3] is None
 
-    def test_try_to_date_custom_format(self):
+        expected_df = spark.createDataFrame(
+            [(date(1997, 2, 28),), (date(2024, 12, 31),), (None,), (None,)],
+            schema="result date",
+        )
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date("d").alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_try_to_date_custom_format(self, spark):
         df = pl.DataFrame({"d": ["28-02-1997", "31-12-2024"]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result")).to_native_df()
@@ -739,53 +793,121 @@ class TestTryToDate:
         assert result["result"][0] == date(1997, 2, 28)
         assert result["result"][1] == date(2024, 12, 31)
 
-    def test_try_to_date_accepts_column_input(self):
+        expected_df = spark.createDataFrame(
+            [(date(1997, 2, 28),), (date(2024, 12, 31),)],
+            schema="result date",
+        )
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_try_to_date_accepts_column_input(self, spark):
         df = pl.DataFrame({"d": ["2024-01-01"]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_to_date(col("d")).alias("result")).to_native_df()
         assert result["result"][0] is not None
 
+        expected_df = spark.createDataFrame([(date(2024, 1, 1),)], schema="result date")
+        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date(col("d")).alias("result")))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
 
 class TestTryElementAt:
     """Tests for try_element_at — arrays (1-based) and maps."""
 
-    def test_array_positive_index(self):
+    @staticmethod
+    def _spark_df_string_array(spark, values: list):
+        return spark.createDataFrame(
+            [(values,)],
+            schema=StructType([StructField("arr", ArrayType(StringType()), True)]),
+        )
+
+    @staticmethod
+    def _spark_df_from_polars_expr(spark, polars_df: DataFrame, expr, value_type):
+        pdf = polars_df.select(expr).to_native_df().to_pandas()
+        return spark.createDataFrame(pdf, schema=StructType([StructField("v", value_type, True)]))
+
+    def test_array_positive_index(self, spark):
         df = pl.DataFrame({"arr": [["a", "b", "c"]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("arr", 1).alias("v")).to_native_df()
         assert result["v"][0] == "a"
+        spark_df = self._spark_df_string_array(spark, ["a", "b", "c"])
+        expected = spark_df.select(spark_try_element_at(spark_col("arr"), spark_lit(1)).alias("v"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_element_at("arr", 1).alias("v")))
+        assert_pyspark_df_equal(result_spark_df, expected, ignore_nullable=True)
 
-    def test_array_last_element(self):
+    def test_array_last_element(self, spark):
         df = pl.DataFrame({"arr": [["a", "b", "c"]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("arr", 3).alias("v")).to_native_df()
         assert result["v"][0] == "c"
+        spark_df = self._spark_df_string_array(spark, ["a", "b", "c"])
+        expected = spark_df.select(spark_try_element_at(spark_col("arr"), spark_lit(3)).alias("v"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_element_at("arr", 3).alias("v")))
+        assert_pyspark_df_equal(result_spark_df, expected, ignore_nullable=True)
 
-    def test_array_negative_index(self):
+    def test_array_negative_index(self, spark):
         df = pl.DataFrame({"arr": [["a", "b", "c"]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("arr", -1).alias("v")).to_native_df()
         assert result["v"][0] == "c"
+        spark_df = self._spark_df_string_array(spark, ["a", "b", "c"])
+        expected = spark_df.select(spark_try_element_at(spark_col("arr"), spark_lit(-1)).alias("v"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_element_at("arr", -1).alias("v")))
+        assert_pyspark_df_equal(result_spark_df, expected, ignore_nullable=True)
 
-    def test_array_oob_returns_null(self):
+    def test_array_oob_returns_null(self, spark):
         df = pl.DataFrame({"arr": [["a", "b", "c"]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("arr", 4).alias("v")).to_native_df()
         assert result["v"][0] is None
+        spark_df = self._spark_df_string_array(spark, ["a", "b", "c"])
+        expected = spark_df.select(spark_try_element_at(spark_col("arr"), spark_lit(4)).alias("v"))
+        result_spark_df = self._spark_df_from_polars_expr(
+            spark, polars_df, try_element_at("arr", 4).alias("v"), StringType()
+        )
+        assert_pyspark_df_equal(result_spark_df, expected, ignore_nullable=True)
 
-    def test_array_zero_index_returns_null(self):
+    def test_array_zero_index_returns_null(self, spark):
         df = pl.DataFrame({"arr": [["a", "b", "c"]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("arr", 0).alias("v")).to_native_df()
         assert result["v"][0] is None
+        # Spark 4 try_element_at(col, 0) fails at runtime (invalid index); we return null instead.
+        result_spark_df = self._spark_df_from_polars_expr(
+            spark, polars_df, try_element_at("arr", 0).alias("v"), StringType()
+        )
+        assert result_spark_df.collect()[0]["v"] is None
 
-    def test_map_key_present(self):
+    def test_map_key_present(self, spark):
         df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
         polars_df = DataFrame(df)
         result = polars_df.select(try_element_at("m", "a").alias("v")).to_native_df()
         assert result["v"][0] == 1.0
+        spark_df = spark.createDataFrame(
+            [({"a": 1.0, "b": 2.0},)],
+            schema=StructType([StructField("m", MapType(StringType(), DoubleType()), True)]),
+        )
+        expected = spark_df.select(spark_try_element_at(spark_col("m"), spark_lit("a")).alias("v"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_element_at("m", "a").alias("v")))
+        assert_pyspark_df_equal(result_spark_df, expected, ignore_nullable=True)
 
-    def test_map_key_absent_returns_null(self):
+    def test_map_key_absent_returns_null(self, spark):
         df = pl.DataFrame({"m": [[{"key": "a", "value": 1.0}, {"key": "b", "value": 2.0}]]})
         polars_df = DataFrame(df)
-        result = polars_df.select(try_element_at("m", "c").alias("v")).to_nativ
+        result = polars_df.select(try_element_at("m", "c").alias("v")).to_native_df()
+        assert result["v"][0] is None
+        spark_df = spark.createDataFrame(
+            [({"a": 1.0, "b": 2.0},)],
+            schema=StructType([StructField("m", MapType(StringType(), DoubleType()), True)]),
+        )
+        expected = spark_df.select(spark_try_element_at(spark_col("m"), spark_lit("c")).alias("v"))
+        result_spark_df = create_spark_df(spark, polars_df.select(try_element_at("m", "c").alias("v")))
+        _assert_spark_columns_both_nullish(result_spark_df, expected)
+
+    def test_accepts_column_input(self, spark):
+        df = pl.DataFrame({"arr": [["x", "y"]]})
+        polars_df = DataFrame(df)
+        result = polars_df.select(try_element_at(col("arr"), 1).alias("v")).to_native_df()
+        assert result["v"][0] == "x"
+        spark_df
