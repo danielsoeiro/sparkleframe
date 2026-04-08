@@ -12,6 +12,7 @@ from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
 from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
 from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
+from pyspark.sql.functions import concat as spark_concat
 from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
@@ -40,6 +41,7 @@ from sparkleframe.polarsdf.functions import (
     asc_nulls_last,
     coalesce,
     col,
+    concat,
     dense_rank,
     desc,
     desc_nulls_first,
@@ -583,6 +585,50 @@ class TestFunctions:
     def test_struct_requires_at_least_one_column(self):
         with pytest.raises(ValueError, match="struct requires at least one column"):
             struct()
+
+
+class TestConcat:
+    """Behaviour tests for :func:`~sparkleframe.polarsdf.functions.concat` (not copied from prior commits)."""
+
+    def test_concat_without_inputs_raises(self) -> None:
+        with pytest.raises(ValueError, match="concat requires at least one column"):
+            concat()
+
+    def test_concat_single_column_is_identity_on_strings(self) -> None:
+        pl_df = pl.DataFrame({"token": ["zig", None, ""]})
+        got = DataFrame(pl_df).select(concat("token").alias("out")).to_native_df()
+        assert got["out"].to_list() == ["zig", None, ""]
+
+    def test_concat_two_parts_any_null_yields_null(self) -> None:
+        pl_df = pl.DataFrame(
+            {
+                "prefix": ["aa", None, "cc"],
+                "suffix": ["bb", "bb", None],
+            }
+        )
+        got = DataFrame(pl_df).select(concat(col("prefix"), col("suffix")).alias("out")).to_native_df()
+        assert got["out"].to_list() == ["aabb", None, None]
+
+    def test_concat_accepts_string_name_or_column_object(self) -> None:
+        pl_df = pl.DataFrame({"segment": ["north", "south"]})
+        sf = DataFrame(pl_df)
+        by_name = sf.select(concat("segment", lit(":"), col("segment")).alias("out")).to_native_df()
+        by_col = sf.select(concat(col("segment"), lit(":"), "segment").alias("out")).to_native_df()
+        assert by_name["out"].to_list() == ["north:north", "south:south"]
+        assert by_col["out"].to_list() == by_name["out"].to_list()
+
+    def test_concat_coerces_integer_columns_like_strings(self, spark) -> None:
+        pl_df = pl.DataFrame({"lane": [7, 0], "slot": [13, 42]})
+        polars_df = DataFrame(pl_df)
+        result_spark_df = create_spark_df(
+            spark,
+            polars_df.select(concat(col("lane"), lit("-"), col("slot")).alias("merged")),
+        )
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        expected_df = spark_df.select(
+            spark_concat(spark_col("lane"), spark_lit("-"), spark_col("slot")).alias("merged"),
+        )
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
 
 class TestTryToTimestamp:
