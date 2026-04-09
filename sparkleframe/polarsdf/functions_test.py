@@ -613,6 +613,21 @@ class TestFunctions:
         result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
 
+    def test_struct_nested_aliased_inner_structs_match_spark(self, spark, sparkle_df, spark_df):
+        """Outer struct must use .alias() names for nested struct children (not col1/col2)."""
+        inner_left = struct(col("a").alias("field_a"))
+        inner_right = struct(col("b").alias("field_b"))
+        composite = struct(inner_left.alias("nested_x"), inner_right.alias("nested_y"))
+        pdf = sparkle_df.select(composite.alias("composite")).toPandas()
+        expected_spark_df = spark_df.select(
+            spark_struct(
+                spark_struct(spark_col("a").alias("field_a")).alias("nested_x"),
+                spark_struct(spark_col("b").alias("field_b")).alias("nested_y"),
+            ).alias("composite")
+        )
+        result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
     def test_struct_nested_with_array_and_map(self, spark):
         """PySpark parity: struct with array and map fields, plus nested struct."""
         schema = StructType(

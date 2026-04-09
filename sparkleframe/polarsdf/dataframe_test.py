@@ -592,6 +592,39 @@ class TestDataFrame:
         result_spark_df = spark.createDataFrame(result_df.toPandas())
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
+    def test_groupby_collect_list_nested_aliased_struct(self, spark):
+        """collect_list(struct(...)) preserves aliased nested struct field names (not col1/col2)."""
+        rows = [
+            {"group_id": "g1", "c1": "u", "c2": 10, "c3": "w"},
+            {"group_id": "g1", "c1": "v", "c2": 20, "c3": "z"},
+        ]
+        spark_base = spark.createDataFrame(rows)
+        spark_item_expr = F.struct(
+            F.struct(F.col("c1"), F.col("c2")).alias("nested_x"),
+            F.struct(F.col("c3").alias("leaf")).alias("nested_y"),
+        ).alias("item")
+        expected_df = (
+            spark_base.withColumn("item", spark_item_expr)
+            .orderBy("group_id", "c1")
+            .groupBy("group_id")
+            .agg(F.collect_list("item").alias("items"))
+        )
+        pl_base = DataFrame(pl.DataFrame(rows))
+        pl_item_expr = PF.struct(
+            PF.struct(PF.col("c1"), PF.col("c2")).alias("nested_x"),
+            PF.struct(PF.col("c3").alias("leaf")).alias("nested_y"),
+        ).alias("item")
+        result_df = (
+            pl_base.withColumn("item", pl_item_expr)
+            .sort("group_id", "c1")
+            .groupBy("group_id")
+            .agg(PF.collect_list("item").alias("items"))
+        )
+        result_spark_df = spark.createDataFrame(result_df.toPandas(), schema=expected_df.schema)
+        assert_pyspark_df_equal(
+            result_spark_df.orderBy("group_id"), expected_df.orderBy("group_id"), ignore_nullable=True
+        )
+
     @pytest.mark.parametrize(
         "how,on_input,expected",
         [

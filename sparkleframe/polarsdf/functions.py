@@ -595,8 +595,13 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
         return arg.split(".")[-1]
     if b"RepeatBy" in expr.meta.serialize():
         return f"col{index + 1}"
+    undone = expr.meta.undo_aliases()
+    # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
+    # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
+    if expr.meta.output_name() != undone.meta.output_name():
+        return expr.meta.output_name().split(".")[-1]
     # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
-    if expr.meta.undo_aliases().meta.is_column():
+    if undone.meta.is_column():
         return expr.meta.output_name().split(".")[-1]
     if expr.meta.is_literal():
         return f"col{index + 1}"
